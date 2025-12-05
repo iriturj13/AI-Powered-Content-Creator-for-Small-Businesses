@@ -56,7 +56,7 @@ Gemini 2.5 Flash returns standardized marketing outputs using enforced schemas:
   "caption": "",
   "hashtags": []
 }
-
+```
 This contains everything you need to run your app locally.
 
 View your app in AI Studio: https://ai.studio/apps/drive/1roBys4lmLqUZv89Skwsv-6pEyHeiYb4d
