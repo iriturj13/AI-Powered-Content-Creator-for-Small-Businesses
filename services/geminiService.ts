@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
-import { MarketingFormData, GenerationResponse, GeneratedCaption } from "../types";
+import { MarketingFormData, GenerationResponse, GeneratedCaption, AuditResponse } from "../types";
 
 const apiKey = process.env.API_KEY || '';
 
@@ -32,6 +32,40 @@ const captionSchema: Schema = {
     }
   },
   required: ["options"]
+};
+
+const auditSchema: Schema = {
+  type: Type.OBJECT,
+  properties: {
+    issues: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          category: {
+            type: Type.STRING,
+            enum: ['Fairness/Bias', 'Harmful Content', 'Neutrality', 'Misleading Claims', 'Other'],
+            description: "The category of the issue."
+          },
+          concern: {
+            type: Type.STRING,
+            description: "A brief description of the specific problematic text or concept."
+          },
+          explanation: {
+            type: Type.STRING,
+            description: "A detailed explanation of why this is a concern based on AI principles."
+          }
+        },
+        required: ["category", "concern", "explanation"]
+      },
+      description: "A list of identified issues. Return an empty array if the content is perfect."
+    },
+    revisedContent: {
+      type: Type.STRING,
+      description: "A revised version of the content that addresses all identified issues while maintaining the original marketing intent."
+    }
+  },
+  required: ["issues", "revisedContent"]
 };
 
 const generateImageForOption = async (formData: MarketingFormData, vibe: string): Promise<string | undefined> => {
@@ -126,6 +160,47 @@ export const generateMarketingCopy = async (formData: MarketingFormData): Promis
 
   } catch (error) {
     console.error("Error generating content:", error);
+    throw error;
+  }
+};
+
+export const auditMarketingCopy = async (contentToAnalyze: string): Promise<AuditResponse> => {
+  if (!apiKey) {
+    throw new Error("API Key is missing.");
+  }
+
+  const prompt = `
+    You are a Google Responsible AI Auditor. Your primary function is to evaluate AI-generated marketing content for small businesses, ensuring it aligns with responsible AI principles, specifically regarding fairness, safety, and neutrality.
+    
+    Content to Analyze:
+    "${contentToAnalyze}"
+
+    Please perform the following audit:
+    1. Identify Issues: List any potential problems based on Fairness/Bias, Harmful Content, Neutrality, or Misleading Claims.
+    2. Explain Concerns: For each issue, explain why it is a concern.
+    3. Suggest Revisions: Provide a revised version that addresses all issues.
+  `;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: auditSchema,
+        temperature: 0.2, // Lower temperature for more analytical/consistent results
+      },
+    });
+
+    const jsonText = response.text;
+    if (!jsonText) {
+      throw new Error("No response received from Gemini.");
+    }
+
+    return JSON.parse(jsonText) as AuditResponse;
+
+  } catch (error) {
+    console.error("Error auditing content:", error);
     throw error;
   }
 };
