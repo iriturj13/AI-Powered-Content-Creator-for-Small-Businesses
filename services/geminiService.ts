@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
-import { MarketingFormData, GenerationResponse, GeneratedCaption, AuditResponse } from "../types";
+import { MarketingFormData, GenerationResponse, AuditResponse, AuditResultItem } from "../types";
 
 const apiKey = process.env.API_KEY || '';
 
@@ -34,30 +34,32 @@ const captionSchema: Schema = {
   required: ["options"]
 };
 
+const auditIssueSchema: Schema = {
+  type: Type.OBJECT,
+  properties: {
+    category: {
+      type: Type.STRING,
+      enum: ['Fairness/Bias', 'Harmful Content', 'Neutrality', 'Misleading Claims', 'Other'],
+      description: "The category of the issue."
+    },
+    concern: {
+      type: Type.STRING,
+      description: "A brief description of the specific problematic text or concept."
+    },
+    explanation: {
+      type: Type.STRING,
+      description: "A detailed explanation of why this is a concern based on AI principles."
+    }
+  },
+  required: ["category", "concern", "explanation"]
+};
+
 const auditSchema: Schema = {
   type: Type.OBJECT,
   properties: {
     issues: {
       type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          category: {
-            type: Type.STRING,
-            enum: ['Fairness/Bias', 'Harmful Content', 'Neutrality', 'Misleading Claims', 'Other'],
-            description: "The category of the issue."
-          },
-          concern: {
-            type: Type.STRING,
-            description: "A brief description of the specific problematic text or concept."
-          },
-          explanation: {
-            type: Type.STRING,
-            description: "A detailed explanation of why this is a concern based on AI principles."
-          }
-        },
-        required: ["category", "concern", "explanation"]
-      },
+      items: auditIssueSchema,
       description: "A list of identified issues. Return an empty array if the content is perfect."
     },
     revisedContent: {
@@ -66,6 +68,34 @@ const auditSchema: Schema = {
     }
   },
   required: ["issues", "revisedContent"]
+};
+
+const batchAuditSchema: Schema = {
+  type: Type.OBJECT,
+  properties: {
+    results: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          originalIndex: {
+            type: Type.INTEGER,
+            description: "The index of the caption from the input list."
+          },
+          issues: {
+            type: Type.ARRAY,
+            items: auditIssueSchema
+          },
+          revisedContent: {
+            type: Type.STRING,
+            description: "A revised version of the content."
+          }
+        },
+        required: ["originalIndex", "issues", "revisedContent"]
+      }
+    }
+  },
+  required: ["results"]
 };
 
 const generateImageForOption = async (formData: MarketingFormData, vibe: string): Promise<string | undefined> => {
@@ -188,7 +218,7 @@ export const auditMarketingCopy = async (contentToAnalyze: string): Promise<Audi
       config: {
         responseMimeType: "application/json",
         responseSchema: auditSchema,
-        temperature: 0.2, // Lower temperature for more analytical/consistent results
+        temperature: 0.2,
       },
     });
 
@@ -201,6 +231,55 @@ export const auditMarketingCopy = async (contentToAnalyze: string): Promise<Audi
 
   } catch (error) {
     console.error("Error auditing content:", error);
+    throw error;
+  }
+};
+
+export const auditBatchMarketingCopy = async (captions: string[]): Promise<AuditResultItem[]> => {
+  if (!apiKey) {
+    throw new Error("API Key is missing.");
+  }
+
+  const formattedCaptions = captions.map((c, i) => `Caption ${i}: "${c}"`).join('\n\n');
+
+  const prompt = `
+    You are a Google Responsible AI Auditor. Evaluate the following list of marketing captions.
+    
+    For EACH caption, identify any issues regarding Fairness/Bias, Harmful Content, Neutrality, or Misleading Claims, and provide a revised version.
+    
+    List of Captions to Analyze:
+    ${formattedCaptions}
+  `;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: batchAuditSchema,
+        temperature: 0.2,
+      },
+    });
+
+    const jsonText = response.text;
+    if (!jsonText) {
+      throw new Error("No response received from Gemini.");
+    }
+
+    const parsedData = JSON.parse(jsonText);
+    
+    // Map results back to original text using index
+    const results: AuditResultItem[] = parsedData.results.map((res: any) => ({
+      issues: res.issues,
+      revisedContent: res.revisedContent,
+      originalText: captions[res.originalIndex] || "Original text not found"
+    }));
+
+    return results;
+
+  } catch (error) {
+    console.error("Error batch auditing content:", error);
     throw error;
   }
 };

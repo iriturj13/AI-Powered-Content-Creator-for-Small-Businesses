@@ -30,3 +30,20 @@ export interface AuditResponse {
   issues: AuditIssue[];
   revisedContent: string;
 }
+
+export interface AuditResultItem extends AuditResponse {
+  originalText: string;
+}
+
+// History Types
+export interface HistoryItem {
+  id: string;
+  type: 'generate' | 'audit';
+  timestamp: number;
+  data: {
+    formData?: MarketingFormData; // For generate
+    genResults?: GeneratedCaption[]; // For generate
+    auditInput?: string; // For audit
+    auditResult?: AuditResponse; // For audit
+  };
+}
